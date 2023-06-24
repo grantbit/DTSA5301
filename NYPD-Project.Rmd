@@ -1,0 +1,205 @@
+---
+title: "NYPD Shooting Incident Data Report"
+date: "6/16/2023"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(always_allow_html = TRUE)
+```
+
+List of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.
+
+This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included. This data can be used by the public to explore the nature of shooting/criminal activity. Please refer to the attached data footnotes for additional information about this dataset.
+
+```{r library, message=FALSE, warning=FALSE, echo = FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggmap)
+library(viridis)
+library(leaflet)
+library(maps)
+library(reshape2)
+library(htmltools)
+```
+
+## Load and Tidy Data
+
+Filter out columns that will not be used. I do not plan on using the following columns: **PRECINCT**, **JURISDICTION_CODE**, **LOCATION_DESC**, **X_COORD_CD**, **Y_COORD_CD**, and **Lon_Lat**.
+
+```{r message=FALSE, warning=FALSE}
+df = read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+
+df_2 = df %>% select(INCIDENT_KEY, 
+                   OCCUR_DATE,
+                   OCCUR_TIME,
+                   BORO, 
+                   STATISTICAL_MURDER_FLAG,
+                   PERP_AGE_GROUP,
+                   PERP_SEX,
+                   PERP_RACE,
+                   VIC_AGE_GROUP,
+                   VIC_SEX,
+                   VIC_RACE,
+                   Latitude,
+                   Longitude)
+
+lapply(df_2, function(x) sum(is.na(x)))
+head(df_2)
+```
+
+There are many data points which are incomplete. This meaning that they do not have entries for every column. I attributed this to potentially be caused by several factors (unknown info, open investigation, etc.) so will display these gaps in the data as "unknown".
+
+Data Types:
+
+-   **STRINGS:** INCIDENT_KEY
+-   **FACTORS:** BORO, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE
+
+```{r message=FALSE, warning=FALSE}
+df_2 = df_2 %>% 
+  replace_na(list(PERP_AGE_GROUP = "Unknown", PERP_SEX = "Unknown", PERP_RACE = "Unknown"))
+
+# Remove outliers in data
+df_2 = subset(df_2, PERP_AGE_GROUP!="1020" & PERP_AGE_GROUP!="224" & PERP_AGE_GROUP!="940")
+
+df_2$PERP_AGE_GROUP = recode(df_2$PERP_AGE_GROUP, UNKNOWN = "Unknown")
+df_2$PERP_SEX = recode(df_2$PERP_SEX, U = "Unknown")
+df_2$PERP_RACE = recode(df_2$PERP_RACE, UNKNOWN = "Unknown")
+df_2$VIC_SEX   = recode(df_2$VIC_SEX, U = "Unknown")
+df_2$VIC_RACE   = recode(df_2$VIC_RACE, UNKNOWN = "Unknown")
+df_2$INCIDENT_KEY = as.character(df_2$INCIDENT_KEY)
+df_2$BORO = as.factor(df_2$BORO)
+df_2$PERP_AGE_GROUP = as.factor(df_2$PERP_AGE_GROUP)
+df_2$PERP_SEX = as.factor(df_2$PERP_SEX)
+df_2$PERP_RACE = as.factor(df_2$PERP_RACE)
+df_2$VIC_AGE_GROUP = as.factor(df_2$VIC_AGE_GROUP)
+df_2$VIC_SEX = as.factor(df_2$VIC_SEX)
+df_2$VIC_RACE = as.factor(df_2$VIC_RACE)
+
+summary(df_2)
+```
+
+## Visualization and Analysis
+
+First I decided to plot all of the incidents by longitude and latitude over a map of the city. This creates a user friendly way to visualize the density of incidents but will not be extracting data from this figure. I chose to not knit this document to pdf so this map can still be used as intended. While this data set is just NYC it would have also been interesting to look at data of areas surrounding NYC for comparison.
+
+```{r message=FALSE, warning=FALSE}
+leaflet_map <- leaflet() %>%
+  addTiles() %>%
+  setView(lng = -74.00, lat = 40.71, zoom = 10)
+
+leaflet_markers <- leaflet_map %>%
+  addCircleMarkers(data = df_2, lng = ~Longitude, lat = ~Latitude, radius = 0.01, color = "red", fillOpacity = 0.5)
+
+leaflet_markers
+```
+
+Occurrence by Borough
+
+*Brooklyn is the 1st in terms of the number of incidents, followed by Bronx and Queens respectively.* Likewise, the number of murder cases follows the same pattern as that of incidents.
+
+```{r}
+boro_plot <- ggplot(df_2, aes(x = BORO, fill = BORO)) +
+  geom_bar() +
+  labs(title = "Boroughs with Most Shooting Incidents",
+       x = "Boroughs",
+       y = "Count of Incidents") +
+  theme_minimal() +
+  theme(legend.position = "none")
+boro_plot
+```
+
+```{r}
+borough_murder_cases <- table(df_2$BORO, df_2$STATISTICAL_MURDER_FLAG)
+borough_murder_cases
+```
+
+Occurrence by Date and Time
+
+-   There are increased frequency of an incident during the weekend
+-   Incidents historically happen later in the day and at night.
+
+```{r}
+df_2$OCCUR_DAY <- wday(mdy(df_2$OCCUR_DATE), label = TRUE)
+df_2$OCCUR_HOUR <- hour(hms(as.character(df_2$OCCUR_TIME)))
+
+day_of_week_counts <- df_2 %>%
+  count(OCCUR_DAY)
+
+hour_of_day_counts <- df_2 %>%
+  count(OCCUR_HOUR)
+```
+
+```{r}
+week_plot <- ggplot(day_of_week_counts, aes(x = OCCUR_DAY, y = n, fill = OCCUR_DAY)) +
+  geom_col() +
+  labs(title = "Incident Occurrence by Day of Week",
+       x = "Day of Week",
+       y = "Frequency") +
+  theme_minimal() +
+  theme(legend.position = "none")
+week_plot
+```
+
+```{r}
+day_plot <- ggplot(hour_of_day_counts, aes(x = OCCUR_HOUR, y = n)) +
+  geom_line(color = "purple") +
+  labs(title = "Incident Occurrence by Hour of Day",
+       x = "Hour of Day",
+       y = "Frequency") +
+  theme_minimal()
+day_plot
+```
+
+To dive further into days of the week I created a heat map of incident frequency by weekday and month. This allows us to look if certain days of the week have increased incident occurrence during certain times of the year. Additionally this can be further explored by replacing day of the week with day of the month. This revealed that weekends in the summer have an even higher occurence than weekends at other points in the year.
+
+```{r message=FALSE, warning=FALSE}
+df_2$OCCUR_DATE <- mdy(df_2$OCCUR_DATE)
+
+df_2$Month <- month(df_2$OCCUR_DATE, label = TRUE)
+df_2$Day <- wday(df_2$OCCUR_DATE, label = TRUE)
+
+summary_df <- df_2 %>%
+  group_by(Month, Day) %>%
+  summarise(Frequency = n())
+
+ggplot(summary_df, aes(x = Month, y = Day, fill = Frequency)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "red") +
+  labs(title = "Incident Frequency Heatmap", x = "Month", y = "Day of Week") +
+  theme_bw()
+```
+
+Victim and Perpetrator Profiles
+
+-   Largest occurrence of incidents with age groups 18-24 & 25-44.
+-   Overall more incidents involving males than females.
+-   Large occurrence of incidents with victim and perpetrator in same age group
+
+```{r}
+age_group_table <- table(df_2$PERP_AGE_GROUP, df_2$VIC_AGE_GROUP)
+age_group_table
+```
+
+```{r}
+sex_table <- table(df_2$PERP_SEX, df_2$VIC_SEX)
+sex_table
+```
+
+```{r}
+race_table <- table(df_2$PERP_RACE, df_2$VIC_RACE)
+race_table
+```
+
+## Identify Bias
+
+The first source of bias I would like to address is my own. I have never lived in New York City but have of course seen TV, movies, and other media that portrays the city. Based on this previous media I have consumed I would have guessed that Manhattan would have the lowest incident occurrence of the boroughs. This would certainly be very different from someone who grew up in New York City and had personal experiences adding to their bias.
+
+The data may reflect biases in the demographics of individuals involved in shooting incidents. It is important to examine whether certain racial or ethnic groups are disproportionately represented in the data, which could indicate systemic biases in policing practices.
+
+Finally I would like to acknowledge geographic bias. It is very likely that police presence differs between boroughs. This could result in a reporting bias where some boroughs appear to have more incidents than others where in reality a higher police presence results in more recorded incidents where in reality the number of incidents may be similar between boroughs they are just not being recorded.
