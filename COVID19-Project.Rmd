@@ -1,0 +1,136 @@
+---
+title: "COVID19-Project"
+author: "Grant Bitner"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+After three years of around-the-clock tracking of COVID-19 data from around the world, Johns Hopkins has discontinued the Coronavirus Resource Center's operations. The site's two raw data repositories will remain accessible for information collected from 1/22/20 to 3/10/23 on cases, deaths, vaccines, testing and demographics.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(readr)
+library(ggplot2)
+```
+
+## Load and Tidy Data
+
+```{r message=FALSE, warning=FALSE}
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/4360e50239b4eb6b22f3a1759323748f36752177/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_global.csv")
+urls <- str_c(url_in, file_names)
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+```
+
+```{r message=FALSE, warning=FALSE}
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region', Lat, Long),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat, Long))
+
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region', Lat, Long),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat, Long))
+
+global <- full_join(global_cases, global_deaths,
+                    by = c("Province/State", "Country/Region", "date")) %>%
+  rename(Province_State = "Province/State",
+         Country_Region = "Country/Region",
+         cases = cases.x,
+         deaths = cases.y) %>%
+  mutate(date = mdy(date))
+
+global_amended <- global %>%
+  filter(cases > 1000000)
+
+head(global)
+```
+
+## Data analysis and Visualization
+
+First I created a stacked bar graph with cases and deaths by country. I filtered the data to only include countries with cases over 1,000,000 in this graph to limit cluttering of countries will low cases. It is important to note that this has not been normalized by a countries population and is simply number of cases/deaths.
+
+```{r }
+global$Date <- as.Date(global$date)
+
+ggplot(global_amended, aes(x = Country_Region)) +
+  geom_bar(aes(y = cases, fill = "Cases"), stat = "identity") +
+  geom_bar(aes(y = deaths, fill = "Deaths"), stat = "identity") +
+  labs(x = "Country/Region", y = "Count") +
+  scale_fill_manual(values = c("Cases" = "blue", "Deaths" = "red")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6))
+
+```
+
+Here I created a simple time series of cases per date. This allows us to witness the sharp increases in cases as well as periods of slowed growth. I made sure to revert the filtering cases below a million back to any cases above 0 for the remainder of the report.
+
+```{r}
+global <- global %>%
+  filter(cases > 0)
+
+ggplot(global, aes(x = date, y = cases)) +
+  geom_line(color = "purple") +
+  labs(title = "COVID-19 Cases Over Time",
+       x = "Date",
+       y = "Number of Cases")
+```
+
+Similarly here is a time series of deaths plotted against time. You will notice they have a similar trend as cases.
+
+```{r}
+ggplot(global, aes(x = date, y = deaths)) +
+  geom_line(color = "orange") +
+  labs(title = "COVID-19 Cases Over Time",
+       x = "Date",
+       y = "Number of Cases")
+```
+
+Here I created a basic table to compare mortality rates between countries.
+
+```{r}
+mortality_table <- global %>%
+  group_by(Country_Region) %>%
+  summarise(
+    Total_Cases = sum(cases),
+    Total_Deaths = sum(deaths),
+    Mortality_Rate = Total_Deaths / Total_Cases * 100
+  )
+
+print(mortality_table)
+```
+
+Finally I wanted to look at the countries with the top 10 mortality rates, as well as those with the bottom 10 mortality rates.
+
+```{r}
+sorted_table <- arrange(mortality_table, Mortality_Rate)
+
+lowest_mortality <- head(sorted_table, n = 10)
+
+highest_mortality <- tail(sorted_table, n = 10)
+
+cat("Top 10 Lowest Mortality Rates:\n")
+print(lowest_mortality)
+
+cat("\nTop 10 Highest Mortality Rates:\n")
+print(highest_mortality)
+```
+
+## Identify Bias
+
+First I will identify some of my own bias. I live in the US so naturally could be influenced by my own experiences when analyzing the data. I chose to look at the world as a whole instead of the US more specifically to limit this.
+
+There is certainly a reporting bias that must be taken into consider between countries. Some countries are going to have more accurate reporting than others which can result in the data fluctuating in both directions. Additionally some countries could have potentially under reported their own cases and deaths to downplay the severity in the respective country for political reasons.
